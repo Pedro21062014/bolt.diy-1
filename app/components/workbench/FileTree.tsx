@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, useLayoutEffect } from 'react';
 import type { FileMap } from '~/lib/stores/files';
 import { classNames } from '~/utils/classNames';
 import { createScopedLogger, renderLogger } from '~/utils/logger';
@@ -8,11 +8,33 @@ import { diffLines, type Change } from 'diff';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { toast } from 'react-toastify';
 import { path } from '~/utils/path';
+import { FixedSizeList as List, areEqual } from 'react-window';
 
 const logger = createScopedLogger('FileTree');
 
 const NODE_PADDING_LEFT = 8;
 const DEFAULT_HIDDEN_FILES = [/\/node_modules\//, /\/\.next/, /\/\.astro/];
+
+function useMeasure() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [bounds, setBounds] = useState({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      const observer = new ResizeObserver(([entry]) => {
+        setBounds({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      });
+      observer.observe(ref.current);
+      return () => observer.disconnect();
+    }
+  }, []);
+
+  return { ref, bounds };
+}
+
 
 interface Props {
   files?: FileMap;
@@ -35,6 +57,86 @@ interface InlineInputProps {
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }
+
+interface NodeData {
+  fileOrFolder: Node;
+  selectedFile?: string;
+  allowFolderSelection: boolean;
+  collapsedFolders: Set<string>;
+  unsavedFiles?: Set<string>;
+  fileHistory?: Record<string, FileHistory>;
+  onFileSelect?: (filePath: string) => void;
+  toggleCollapseState: (fullPath: string) => void;
+  onCopyPath: (fileOrFolder: FileNode | FolderNode) => void;
+  onCopyRelativePath: (fileOrFolder: FileNode | FolderNode) => void;
+}
+
+const Row = memo(({ index, style, data }: { index: number; style: React.CSSProperties; data: NodeData }) => {
+  const {
+    fileOrFolder,
+    selectedFile,
+    allowFolderSelection,
+    collapsedFolders,
+    unsavedFiles,
+    fileHistory,
+    onFileSelect,
+    toggleCollapseState,
+    onCopyPath,
+    onCopyRelativePath,
+  } = { ...data, fileOrFolder: (data as any).fileList[index] };
+
+  if (!fileOrFolder) return null;
+
+  switch (fileOrFolder.kind) {
+    case 'file': {
+      return (
+        <div style={style}>
+          <File
+            key={fileOrFolder.id}
+            selected={selectedFile === fileOrFolder.fullPath}
+            file={fileOrFolder}
+            unsavedChanges={unsavedFiles instanceof Set && unsavedFiles.has(fileOrFolder.fullPath)}
+            fileHistory={fileHistory?.[fileOrFolder.fullPath]}
+            onCopyPath={() => {
+              onCopyPath(fileOrFolder);
+            }}
+            onCopyRelativePath={() => {
+              onCopyRelativePath(fileOrFolder);
+            }}
+            onClick={() => {
+              onFileSelect?.(fileOrFolder.fullPath);
+            }}
+          />
+        </div>
+      );
+    }
+    case 'folder': {
+      return (
+        <div style={style}>
+          <Folder
+            key={fileOrFolder.id}
+            folder={fileOrFolder}
+            selected={allowFolderSelection && selectedFile === fileOrFolder.fullPath}
+            collapsed={collapsedFolders.has(fileOrFolder.fullPath)}
+            onCopyPath={() => {
+              onCopyPath(fileOrFolder);
+            }}
+            onCopyRelativePath={() => {
+              onCopyRelativePath(fileOrFolder);
+            }}
+            onClick={() => {
+              toggleCollapseState(fileOrFolder.fullPath);
+            }}
+          />
+        </div>
+      );
+    }
+    default: {
+      return null;
+    }
+  }
+}, areEqual);
+
 
 export const FileTree = memo(
   ({
@@ -112,7 +214,7 @@ export const FileTree = memo(
       return list;
     }, [fileList, collapsedFolders]);
 
-    const toggleCollapseState = (fullPath: string) => {
+    const toggleCollapseState = useCallback((fullPath: string) => {
       setCollapsedFolders((prevSet) => {
         const newSet = new Set(prevSet);
 
@@ -124,72 +226,54 @@ export const FileTree = memo(
 
         return newSet;
       });
-    };
+    }, []);
 
-    const onCopyPath = (fileOrFolder: FileNode | FolderNode) => {
+    const onCopyPath = useCallback((fileOrFolder: FileNode | FolderNode) => {
       try {
         navigator.clipboard.writeText(fileOrFolder.fullPath);
       } catch (error) {
         logger.error(error);
       }
-    };
+    }, []);
 
-    const onCopyRelativePath = (fileOrFolder: FileNode | FolderNode) => {
+    const onCopyRelativePath = useCallback((fileOrFolder: FileNode | FolderNode) => {
       try {
         navigator.clipboard.writeText(fileOrFolder.fullPath.substring((rootFolder || '').length));
       } catch (error) {
         logger.error(error);
       }
-    };
+    }, [rootFolder]);
+
+    const itemData = useMemo(() => ({
+      fileList: filteredFileList,
+      selectedFile,
+      allowFolderSelection,
+      collapsedFolders,
+      unsavedFiles,
+      fileHistory,
+      onFileSelect,
+      toggleCollapseState,
+      onCopyPath,
+      onCopyRelativePath
+    }), [filteredFileList, selectedFile, allowFolderSelection, collapsedFolders, unsavedFiles, fileHistory, onFileSelect, toggleCollapseState, onCopyPath, onCopyRelativePath]);
+
+    const { ref, bounds } = useMeasure();
 
     return (
-      <div className={classNames('text-sm', className, 'overflow-y-auto modern-scrollbar')}>
-        {filteredFileList.map((fileOrFolder) => {
-          switch (fileOrFolder.kind) {
-            case 'file': {
-              return (
-                <File
-                  key={fileOrFolder.id}
-                  selected={selectedFile === fileOrFolder.fullPath}
-                  file={fileOrFolder}
-                  unsavedChanges={unsavedFiles instanceof Set && unsavedFiles.has(fileOrFolder.fullPath)}
-                  fileHistory={fileHistory}
-                  onCopyPath={() => {
-                    onCopyPath(fileOrFolder);
-                  }}
-                  onCopyRelativePath={() => {
-                    onCopyRelativePath(fileOrFolder);
-                  }}
-                  onClick={() => {
-                    onFileSelect?.(fileOrFolder.fullPath);
-                  }}
-                />
-              );
-            }
-            case 'folder': {
-              return (
-                <Folder
-                  key={fileOrFolder.id}
-                  folder={fileOrFolder}
-                  selected={allowFolderSelection && selectedFile === fileOrFolder.fullPath}
-                  collapsed={collapsedFolders.has(fileOrFolder.fullPath)}
-                  onCopyPath={() => {
-                    onCopyPath(fileOrFolder);
-                  }}
-                  onCopyRelativePath={() => {
-                    onCopyRelativePath(fileOrFolder);
-                  }}
-                  onClick={() => {
-                    toggleCollapseState(fileOrFolder.fullPath);
-                  }}
-                />
-              );
-            }
-            default: {
-              return undefined;
-            }
-          }
-        })}
+      <div className={classNames('text-sm', className, 'overflow-hidden h-full flex flex-col')}>
+        <div className="flex-1 min-h-0" ref={ref}>
+          {bounds.height > 0 && (
+            <List
+              height={bounds.height}
+              itemCount={filteredFileList.length}
+              itemSize={28}
+              width={bounds.width}
+              itemData={itemData}
+            >
+              {Row}
+            </List>
+          )}
+        </div>
       </div>
     );
   },
@@ -587,7 +671,7 @@ function FileContextMenu({
   );
 }
 
-function Folder({ folder, collapsed, selected = false, onCopyPath, onCopyRelativePath, onClick }: FolderProps) {
+const Folder = memo(({ folder, collapsed, selected = false, onCopyPath, onCopyRelativePath, onClick }: FolderProps) => {
   // Check if the folder is locked
   const { isLocked } = workbenchStore.isFolderLocked(folder.fullPath);
 
@@ -618,33 +702,33 @@ function Folder({ folder, collapsed, selected = false, onCopyPath, onCopyRelativ
       </NodeButton>
     </FileContextMenu>
   );
-}
+});
 
 interface FileProps {
   file: FileNode;
   selected: boolean;
   unsavedChanges?: boolean;
-  fileHistory?: Record<string, FileHistory>;
+  fileHistory?: FileHistory;
   onCopyPath: () => void;
   onCopyRelativePath: () => void;
   onClick: () => void;
 }
 
-function File({
+const File = memo(({
   file,
   onClick,
   onCopyPath,
   onCopyRelativePath,
   selected,
   unsavedChanges = false,
-  fileHistory = {},
-}: FileProps) {
+  fileHistory,
+}: FileProps) => {
   const { depth, name, fullPath } = file;
 
   // Check if the file is locked
   const { locked } = workbenchStore.isFileLocked(fullPath);
 
-  const fileModifications = fileHistory[fullPath];
+  const fileModifications = fileHistory;
 
   const { additions, deletions } = useMemo(() => {
     if (!fileModifications?.originalContent) {
@@ -722,7 +806,7 @@ function File({
       </NodeButton>
     </FileContextMenu>
   );
-}
+});
 
 interface ButtonProps {
   depth: number;
