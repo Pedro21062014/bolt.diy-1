@@ -695,6 +695,8 @@ export class FilesStore {
 
   #processEventBuffer(events: Array<[events: PathWatcherEvent[]]>) {
     const watchEvents = events.flat(2);
+    const currentFiles = { ...this.files.get() };
+    let hasChanges = false;
 
     for (const { type, path, buffer } of watchEvents) {
       // remove any trailing slashes
@@ -703,15 +705,17 @@ export class FilesStore {
       switch (type) {
         case 'add_dir': {
           // we intentionally add a trailing slash so we can distinguish files from folders in the file tree
-          this.files.setKey(sanitizedPath, { type: 'folder' });
+          currentFiles[sanitizedPath] = { type: 'folder' };
+          hasChanges = true;
           break;
         }
         case 'remove_dir': {
-          this.files.setKey(sanitizedPath, undefined);
+          delete currentFiles[sanitizedPath];
+          hasChanges = true;
 
-          for (const [direntPath] of Object.entries(this.files)) {
+          for (const [direntPath] of Object.entries(currentFiles)) {
             if (direntPath.startsWith(sanitizedPath)) {
-              this.files.setKey(direntPath, undefined);
+              delete currentFiles[direntPath];
             }
           }
 
@@ -737,13 +741,15 @@ export class FilesStore {
             content = this.#decodeFileContent(buffer);
           }
 
-          this.files.setKey(sanitizedPath, { type: 'file', content, isBinary });
+          currentFiles[sanitizedPath] = { type: 'file', content, isBinary };
+          hasChanges = true;
 
           break;
         }
         case 'remove_file': {
           this.#size--;
-          this.files.setKey(sanitizedPath, undefined);
+          delete currentFiles[sanitizedPath];
+          hasChanges = true;
           break;
         }
         case 'update_directory': {
@@ -751,6 +757,10 @@ export class FilesStore {
           break;
         }
       }
+    }
+
+    if (hasChanges) {
+      this.files.set(currentFiles);
     }
   }
 

@@ -6,10 +6,10 @@ export const createChatFromFolder = async (
   files: File[],
   binaryFiles: string[],
   folderName: string,
-): Promise<Message[]> => {
+): Promise<{ messages: Message[]; files: Record<string, { content: string; isBinary: boolean }> }> => {
   const fileArtifacts = await Promise.all(
     files.map(async (file) => {
-      return new Promise<{ content: string; path: string }>((resolve, reject) => {
+      return new Promise<{ content: string; path: string; isBinary: boolean }>((resolve, reject) => {
         const reader = new FileReader();
 
         reader.onload = () => {
@@ -18,6 +18,7 @@ export const createChatFromFolder = async (
           resolve({
             content,
             path: relativePath,
+            isBinary: false, // We filtered strictly binary files before this function, but this could be improved
           });
         };
         reader.onerror = reject;
@@ -25,6 +26,11 @@ export const createChatFromFolder = async (
       });
     }),
   );
+
+  const filesRecord: Record<string, { content: string; isBinary: boolean }> = {};
+  fileArtifacts.forEach((f) => {
+    filesRecord[f.path] = { content: f.content, isBinary: f.isBinary };
+  });
 
   const commands = await detectProjectCommands(fileArtifacts);
   const commandsMessage = createCommandsMessage(commands);
@@ -36,17 +42,7 @@ export const createChatFromFolder = async (
 
   const filesMessage: Message = {
     role: 'assistant',
-    content: `I've imported the contents of the "${folderName}" folder.${binaryFilesMessage}
-
-<boltArtifact id="imported-files" title="Imported Files" type="bundled" >
-${fileArtifacts
-  .map(
-    (file) => `<boltAction type="file" filePath="${file.path}">
-${escapeBoltTags(file.content)}
-</boltAction>`,
-  )
-  .join('\n\n')}
-</boltArtifact>`,
+    content: `I've imported the contents of the "${folderName}" folder.${binaryFilesMessage}`,
     id: generateId(),
     createdAt: new Date(),
   };
@@ -69,5 +65,5 @@ ${escapeBoltTags(file.content)}
     messages.push(commandsMessage);
   }
 
-  return messages;
+  return { messages, files: filesRecord };
 };

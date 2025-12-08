@@ -44,7 +44,7 @@ const MAX_TOTAL_SIZE = 500 * 1024; // 500KB total limit
 
 interface GitCloneButtonProps {
   className?: string;
-  importChat?: (description: string, messages: Message[], metadata?: IChatMetadata) => Promise<void>;
+  importChat?: (description: string, messages: Message[], files?: Record<string, { content: string; isBinary: boolean }>, metadata?: IChatMetadata) => Promise<void>;
 }
 
 export default function GitCloneButton({ importChat, className }: GitCloneButtonProps) {
@@ -72,6 +72,7 @@ export default function GitCloneButton({ importChat, className }: GitCloneButton
         let totalSize = 0;
         const skippedFiles: string[] = [];
         const fileContents = [];
+        const filesRecord: Record<string, { content: string; isBinary: boolean }> = {};
 
         for (const filePath of filePaths) {
           const { data: content, encoding } = data[filePath];
@@ -108,6 +109,7 @@ export default function GitCloneButton({ importChat, className }: GitCloneButton
             }
 
             totalSize += fileSize;
+            filesRecord[filePath] = { content: textContent, isBinary: false };
             fileContents.push({
               path: filePath,
               content: textContent,
@@ -122,24 +124,12 @@ export default function GitCloneButton({ importChat, className }: GitCloneButton
 
         const filesMessage: Message = {
           role: 'assistant',
-          content: `Cloning the repo ${repoUrl} into ${workdir}
-${
-  skippedFiles.length > 0
-    ? `\nSkipped files (${skippedFiles.length}):
+          content: `Cloned the repo ${repoUrl} into ${workdir}
+${skippedFiles.length > 0
+              ? `\nSkipped files (${skippedFiles.length}):
 ${skippedFiles.map((f) => `- ${f}`).join('\n')}`
-    : ''
-}
-
-<boltArtifact id="imported-files" title="Git Cloned Files" type="bundled">
-${fileContents
-  .map(
-    (file) =>
-      `<boltAction type="file" filePath="${file.path}">
-${escapeBoltTags(file.content)}
-</boltAction>`,
-  )
-  .join('\n')}
-</boltArtifact>`,
+              : ''
+            }`,
           id: generateId(),
           createdAt: new Date(),
         };
@@ -150,7 +140,14 @@ ${escapeBoltTags(file.content)}
           messages.push(commandsMessage);
         }
 
-        await importChat(`Git Project:${repoUrl.split('/').slice(-1)[0]}`, messages);
+        await importChat(
+          `Git Project:${repoUrl.split('/').slice(-1)[0]}`,
+          messages,
+          filesRecord,
+          {
+            gitUrl: repoUrl
+          }
+        );
       }
     } catch (error) {
       console.error('Error during import:', error);

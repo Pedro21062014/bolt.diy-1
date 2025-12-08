@@ -9,7 +9,7 @@ import { classNames } from '~/utils/classNames';
 
 interface ImportFolderButtonProps {
   className?: string;
-  importChat?: (description: string, messages: Message[]) => Promise<void>;
+  importChat?: (description: string, messages: Message[], files?: Record<string, { content: string; isBinary: boolean }>) => Promise<void>;
 }
 
 export const ImportFolderButton: React.FC<ImportFolderButtonProps> = ({ className, importChat }) => {
@@ -80,10 +80,10 @@ export const ImportFolderButton: React.FC<ImportFolderButtonProps> = ({ classNam
         toast.info(`Skipping ${binaryFilePaths.length} binary files`);
       }
 
-      const messages = await createChatFromFolder(textFiles, binaryFilePaths, folderName);
+      const { messages, files } = await createChatFromFolder(textFiles, binaryFilePaths, folderName);
 
       if (importChat) {
-        await importChat(folderName, [...messages]);
+        await importChat(folderName, [...messages], files);
       }
 
       logStore.logSystem('Folder imported successfully', {

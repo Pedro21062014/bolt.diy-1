@@ -257,6 +257,7 @@ export async function createChatFromMessages(
   description: string,
   messages: Message[],
   metadata?: IChatMetadata,
+  files?: Record<string, { content: string; isBinary: boolean }>,
 ): Promise<string> {
   const newId = await getNextId(db);
   const newUrlId = await getUrlId(db, newId); // Get a new urlId for the duplicated chat
@@ -270,6 +271,26 @@ export async function createChatFromMessages(
     undefined, // Use the current timestamp
     metadata,
   );
+
+  if (files) {
+    const lastMessageId = messages[messages.length - 1]?.id;
+
+    if (lastMessageId) {
+      const fileMap: any = {};
+      Object.entries(files).forEach(([path, file]) => {
+        fileMap[path] = {
+          type: 'file',
+          content: file.content,
+          isBinary: file.isBinary
+        };
+      });
+      await setSnapshot(db, newId, {
+        chatIndex: lastMessageId,
+        files: fileMap,
+        summary: description,
+      });
+    }
+  }
 
   return newUrlId; // Return the urlId instead of id for navigation
 }
